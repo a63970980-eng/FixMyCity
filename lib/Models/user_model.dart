@@ -3,22 +3,40 @@ class UserModel {
   String? email;
   String? firstName;
   String? secondName;
-  bool? isVerified;
+  bool isVerified;
+  String role; // citizen / admin
+  DateTime? createdAt;
 
-  UserModel(
-      {this.uid, this.email, this.firstName, this.secondName, this.isVerified});
+  UserModel({
+    this.uid,
+    this.email,
+    this.firstName,
+    this.secondName,
+    this.isVerified = false,
+    this.role = 'citizen',
+    this.createdAt,
+  });
 
-  // receiving data from server
-  factory UserModel.fromMap(map) {
+  /// 🔄 Receive data from Firestore
+  factory UserModel.fromMap(Map<String, dynamic>? map) {
+    if (map == null) {
+      return UserModel();
+    }
+
     return UserModel(
-        uid: map['uid'],
-        email: map['email'],
-        firstName: map['firstName'],
-        secondName: map['secondName'],
-        isVerified: map['isVerified']);
+      uid: map['uid'],
+      email: map['email'],
+      firstName: map['firstName'],
+      secondName: map['secondName'],
+      isVerified: map['isVerified'] ?? false,
+      role: map['role'] ?? 'citizen',
+      createdAt: map['createdAt'] != null
+          ? (map['createdAt'] as dynamic).toDate()
+          : null,
+    );
   }
 
-  // sending data to our server
+  /// 📤 Send data to Firestore
   Map<String, dynamic> toMap() {
     return {
       'uid': uid,
@@ -26,6 +44,8 @@ class UserModel {
       'firstName': firstName,
       'secondName': secondName,
       'isVerified': isVerified,
+      'role': role,
+      'createdAt': createdAt ?? DateTime.now(),
     };
   }
 }
