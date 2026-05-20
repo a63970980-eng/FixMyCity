@@ -1,56 +1,77 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:fluttertoast/fluttertoast.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:fixmycity/models/user_model.dart';
+
+import 'package:fixmycity/Models/user_model.dart';
 import 'package:fixmycity/Screens/home.dart';
 import 'package:fixmycity/Screens/remindv.dart';
 
 class VerifyCheckPage extends StatefulWidget {
+  const VerifyCheckPage({super.key});
+
   @override
-  _VerifyCheckPageState createState() => _VerifyCheckPageState();
+  State<VerifyCheckPage> createState() => _VerifyCheckPageState();
 }
 
 class _VerifyCheckPageState extends State<VerifyCheckPage> {
-  User? user = FirebaseAuth.instance.currentUser;
+  final User? user = FirebaseAuth.instance.currentUser;
   UserModel loggedInUser = UserModel();
-  bool _isLoading = false;
+
+  bool isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    pullData();
+    _loadUserData();
   }
 
-  void decidePage() {
-    print("Hello2${loggedInUser.isVerified}");
-    if (loggedInUser.isVerified == true) {
+  Future<void> _loadUserData() async {
+    try {
+      if (user == null) return;
+
+      final doc = await FirebaseFirestore.instance
+          .collection("users")
+          .doc(user!.uid)
+          .get();
+
+      loggedInUser = UserModel.fromMap(doc.data());
+
+      _navigateBasedOnVerification();
+    } catch (e) {
+      debugPrint("Error: $e");
+
       setState(() {
-        _isLoading = true;
+        isLoading = false;
       });
-      Navigator.of(context)
-          .pushReplacement(MaterialPageRoute(builder: (context) => HomePage()));
-    } else {
-      Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => RemindVerifyPage()));
     }
   }
 
-  void pullData() {
-    FirebaseFirestore.instance
-        .collection("users")
-        .doc(user!.uid)
-        .get()
-        .then((value) {
-      loggedInUser = UserModel.fromMap(value.data());
-      print("Hello1${loggedInUser.isVerified}");
-      decidePage();
+  void _navigateBasedOnVerification() {
+    final isVerified = loggedInUser.isVerified ?? false;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      if (isVerified) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const HomePage()),
+        );
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const RemindVerifyPage()),
+        );
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold();
+    return const Scaffold(
+      body: Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
   }
 }
