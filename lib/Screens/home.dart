@@ -1,75 +1,119 @@
 import 'dart:io';
 
-import 'package:fixmycity/Screens/map.dart';
-import 'package:fixmycity/Screens/profile.dart';
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 
 import '../Functions/bottomnav.dart';
+import 'profile.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({Key? key}) : super(key: key);
+  const HomePage({super.key});
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
-  final issueController = TextEditingController();
-  Position? _currentPosition;
-  final textController = TextEditingController();
-  File? _imageFile;
-  String dropdownValue = 'Pothole';
-  bool showOtherTextField = false;
+  final GlobalKey<FormState> formKey = GlobalKey<FormState>();
 
-  List<String> dropdownItems = [
-    'Pothole',
-    'Streetlight Outage',
-    'Garbage Collection',
+  final TextEditingController issueController = TextEditingController();
+
+  File? imageFile;
+  String imageUrl = '';
+
+  Position? currentPosition;
+
+  String selectedCategory = 'Electricity Issue';
+  bool showCustomField = false;
+
+  final List<String> categories = [
+    'Electricity Issue',
+    'Water Problem',
+    'Road Damage',
+    'Waste Issue',
     'Other'
   ];
 
-  GlobalKey<FormState> key = GlobalKey();
-
-  CollectionReference _reference =
-      FirebaseFirestore.instance.collection('issues');
-
-  String imageUrl = '';
+  final CollectionReference complaints =
+      FirebaseFirestore.instance.collection('complaints');
 
   @override
   void initState() {
     super.initState();
-    _getCurrentLocation();
+    _getLocation();
   }
 
-  Future<void> _getCurrentLocation() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+  Future<void> _getLocation() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
 
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      return Future.error('Location services are disabled.');
-    }
-
-    permission = await Geolocator.checkPermission();
+    LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        return Future.error('Location permissions are denied');
-      }
     }
 
-    if (permission == LocationPermission.deniedForever) {
-      return Future.error(
-          'Location permissions are permanently denied, we cannot request permissions.');
-    }
+    if (permission == LocationPermission.deniedForever) return;
+
     Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high);
+      desiredAccuracy: LocationAccuracy.high,
+    );
+
+    setState(() => currentPosition = position);
+  }
+
+  Future<void> pickImage(ImageSource source) async {
+    final picker = ImagePicker();
+    final file = await picker.pickImage(source: source);
+
+    if (file == null) return;
+
+    setState(() => imageFile = File(file.path));
+
+    final uniqueName = DateTime.now().millisecondsSinceEpoch.toString();
+
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('complaints')
+        .child(uniqueName);
+
+    await ref.putFile(File(file.path));
+
+    imageUrl = await ref.getDownloadURL();
+  }
+
+  Future<void> submitComplaint() async {
+    if (!formKey.currentState!.validate()) return;
+
+    if (imageUrl.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please upload an image')),
+      );
+      return;
+    }
+
+    if (currentPosition == null) return;
+
+    await complaints.add({
+      'title': issueController.text,
+      'category': selectedCategory,
+      'imageUrl': imageUrl,
+      'latitude': currentPosition!.latitude,
+      'longitude': currentPosition!.longitude,
+      'status': 'pending',
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Complaint submitted successfully')),
+    );
+
     setState(() {
-      _currentPosition = position;
+      issueController.clear();
+      imageFile = null;
+      imageUrl = '';
     });
   }
 
@@ -77,204 +121,135 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       bottomNavigationBar: BottomNav(selectedIndex: 0),
+
       appBar: AppBar(
-        elevation: 4,
+        title: const Text('خدمات عدن الحكومية'),
         centerTitle: true,
-        title: Text('Fix My City'),
-        actions: <Widget>[
+        elevation: 2,
+        actions: [
           IconButton(
-            icon: Icon(
-              Icons.account_circle_outlined,
-            ),
-            tooltip: 'Profile',
+            icon: const Icon(Icons.person),
             onPressed: () {
               Navigator.push(
                 context,
-                PageRouteBuilder(
-                  pageBuilder: (context, animation1, animation2) =>
-                      ProfilePage(),
-                  transitionDuration: Duration.zero,
-                  reverseTransitionDuration: Duration.zero,
-                ),
+                MaterialPageRoute(builder: (_) => const ProfilePage()),
               );
             },
-          ),
+          )
         ],
       ),
+
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          if (imageUrl.isEmpty) {
-            ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Please upload an image')));
-
-            return;
-          }
-
-          if (key.currentState!.validate()) {
-            String issue = issueController.text;
-            double latitude = _currentPosition!.latitude;
-            double longitude = _currentPosition!.longitude;
-
-            Map<String, dynamic> dataToSend = {
-              'issue': issue,
-              'image': imageUrl,
-              'latitude': latitude,
-              'longitude': longitude
-            };
-            _reference.add(dataToSend);
-          }
-          Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (context) => HomePage()));
-        },
-        label: const Text('Submit'),
-        icon: const Icon(Icons.save),
+        onPressed: submitComplaint,
+        icon: const Icon(Icons.send),
+        label: const Text('إرسال البلاغ'),
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Form(
-                key: key,
+
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'تقديم بلاغ جديد',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+
+              const SizedBox(height: 20),
+
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      DropdownButtonFormField<String>(
+                        value: selectedCategory,
+                        items: categories
+                            .map((e) => DropdownMenuItem(
+                                  value: e,
+                                  child: Text(e),
+                                ))
+                            .toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            selectedCategory = value!;
+                            showCustomField = value == 'Other';
+                          });
+                        },
+                        decoration: const InputDecoration(
+                          labelText: 'نوع البلاغ',
+                        ),
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      if (showCustomField)
+                        TextFormField(
+                          controller: issueController,
+                          decoration: const InputDecoration(
+                            labelText: 'اكتب نوع المشكلة',
+                          ),
+                        )
+                      else
+                        TextFormField(
+                          controller: issueController,
+                          decoration: const InputDecoration(
+                            labelText: 'وصف البلاغ',
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              Card(
+                child: ListTile(
+                  title: const Text('الموقع الحالي'),
+                  subtitle: Text(
+                    currentPosition != null
+                        ? '${currentPosition!.latitude}, ${currentPosition!.longitude}'
+                        : 'جاري تحديد الموقع...',
+                  ),
+                  leading: const Icon(Icons.location_on),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              Card(
                 child: Column(
                   children: [
-                    Text(
-                      'Report a Civic Issue',
-                      style: TextStyle(fontSize: 24),
-                    ),
-                    SizedBox(height: 20),
-                    _currentPosition != null
-                        ? Text(
-                            'Your location: ${_currentPosition!.latitude}, ${_currentPosition!.longitude}',
-                            style: TextStyle(fontSize: 16),
-                          )
-                        : CircularProgressIndicator(),
-                    SizedBox(height: 20),
-                    Padding(
-                        padding:
-                            const EdgeInsets.fromLTRB(50.0, 16.0, 50.0, 16.0),
-                        child: DropdownButton<String>(
-                          value: issueController.text.isNotEmpty
-                              ? issueController.text
-                              : null,
-                          hint: Text('Select an issue type'),
-                          items: dropdownItems.map((String value) {
-                            return DropdownMenuItem<String>(
-                              value: value,
-                              child: Text(value),
-                            );
-                          }).toList(),
-                          onChanged: (String? newValue) {
-                            if (newValue == 'Other') {
-                              setState(() {
-                                showOtherTextField = true;
-                                issueController.text = 'Other';
-                              });
-                            } else {
-                              setState(() {
-                                showOtherTextField = false;
-                                issueController.text = newValue ?? '';
-                              });
-                            }
-                          },
-                        )),
-                    if (showOtherTextField)
-                      Padding(
-                          padding:
-                              const EdgeInsets.fromLTRB(50.0, 16.0, 50.0, 16.0),
-                          child: TextField(
-                            controller: issueController,
-                            decoration: InputDecoration(
-                                labelText: 'Enter any other issue type'),
-                          ))
-                    else
-                      Container(),
-                    Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: _imageFile != null
-                          ? Image.file(
-                              _imageFile!,
-                              width: 150.0,
-                              height: 150.0,
-                              fit: BoxFit.cover,
-                            )
-                          : ElevatedButton(
-                              child: Text('Take a Photo'),
-                              onPressed: () async {
-                                ImagePicker imagePicker = ImagePicker();
-                                XFile? file = await imagePicker.pickImage(
-                                    source: ImageSource.camera);
-                                print('${file?.path}');
+                    imageFile != null
+                        ? Image.file(imageFile!, height: 180, fit: BoxFit.cover)
+                        : const Padding(
+                            padding: EdgeInsets.all(20),
+                            child: Text('لم يتم اختيار صورة'),
+                          ),
 
-                                if (file == null) return;
-                                setState(() {
-                                  _imageFile = File(file.path);
-                                });
-
-                                if (file == null) return;
-                                //Import dart:core
-                                String uniqueFileName = DateTime.now()
-                                    .millisecondsSinceEpoch
-                                    .toString();
-                                Reference referenceRoot =
-                                    FirebaseStorage.instance.ref();
-                                Reference referenceDirImages =
-                                    referenceRoot.child('images');
-
-                                Reference referenceImageToUpload =
-                                    referenceDirImages.child('name');
-
-                                try {
-                                  await referenceImageToUpload
-                                      .putFile(File(file.path));
-                                  imageUrl = await referenceImageToUpload
-                                      .getDownloadURL();
-                                } catch (error) {}
-                              },
-                            ),
-                    ),
-                    Visibility(
-                      visible: _imageFile == null,
-                      child: ElevatedButton(
-                        child: Text('Upload a Photo'),
-                        onPressed: () async {
-                          ImagePicker imagePicker = ImagePicker();
-                          XFile? file = await imagePicker.pickImage(
-                              source: ImageSource.gallery);
-                          print('${file?.path}');
-
-                          if (file == null) return;
-                          setState(() {
-                            _imageFile = File(file.path);
-                          });
-
-                          if (file == null) return;
-                          //Import dart:core
-                          String uniqueFileName =
-                              DateTime.now().millisecondsSinceEpoch.toString();
-                          Reference referenceRoot =
-                              FirebaseStorage.instance.ref();
-                          Reference referenceDirImages =
-                              referenceRoot.child('images');
-
-                          Reference referenceImageToUpload =
-                              referenceDirImages.child('name');
-
-                          try {
-                            await referenceImageToUpload
-                                .putFile(File(file.path));
-                            imageUrl =
-                                await referenceImageToUpload.getDownloadURL();
-                          } catch (error) {}
-                        },
-                      ),
-                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        TextButton.icon(
+                          icon: const Icon(Icons.camera),
+                          label: const Text('كاميرا'),
+                          onPressed: () => pickImage(ImageSource.camera),
+                        ),
+                        TextButton.icon(
+                          icon: const Icon(Icons.image),
+                          label: const Text('معرض'),
+                          onPressed: () => pickImage(ImageSource.gallery),
+                        ),
+                      ],
+                    )
                   ],
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
